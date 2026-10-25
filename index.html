@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ZeroBeacon Trust Harness — PayPal Gate Demo</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 760px; padding: 0 1rem; }
+  fieldset { margin-bottom: 1.25rem; }
+  label { display: block; margin: .5rem 0 .25rem; font-weight: 600; }
+  input[type=text], input[type=password] { width: 100%; padding: .45rem; box-sizing: border-box; }
+  pre { background: #111; color: #d7ffd7; padding: 1rem; overflow-x: auto; min-height: 3rem; white-space: pre-wrap; }
+  .row { display: flex; gap: 1rem; } .row > div { flex: 1; }
+  button { padding: .55rem 1.1rem; font-size: 1rem; cursor: pointer; }
+  #paypal-buttons { margin-top: 1rem; }
+  .note { color: #555; font-size: .9rem; }
+</style>
+</head>
+<body>
+<h1>ZeroBeacon Trust Harness — the PayPal gate</h1>
+<p>An AI agent proposes a purchase. The harness audits and verifies the
+proposal <em>before</em> any money moves. Only a measured pass creates a
+PayPal sandbox order; capture records the executed payment in a chained
+receipt ledger. A tampered claim is refused before PayPal is ever called.</p>
+
+<fieldset>
+  <legend>1. Your ZeroBeacon API key</legend>
+  <label for="apikey">API key (judges: use the key from the submission's testing field)</label>
+  <input type="password" id="apikey" autocomplete="off" placeholder="zbk_...">
+  <p class="note">Held in page memory only. Never stored, never sent anywhere except api.zerobeacon.ai.</p>
+</fieldset>
+
+<fieldset>
+  <legend>2. The agent's proposal</legend>
+  <div class="row">
+    <div>
+      <label for="item">Item</label>
+      <input type="text" id="item" value="Formalization inspection">
+    </div>
+    <div>
+      <label for="amount">Amount (USD, sandbox)</label>
+      <input type="text" id="amount" value="25.00">
+    </div>
+  </div>
+  <label>
+    <input type="checkbox" id="tamper"> Tamper: point the same clean manifest at work that actually contains a proof gap (a <code>sorry</code>)
+  </label>
+  <p class="note">Untampered, the manifest honestly describes clean work (0 sorries) and the gate passes.
+  Tampered, the audit re-measures the real files, finds the gap the manifest denies, and the flow refuses — no PayPal order exists.</p>
+  <button id="propose">Run the gate</button>
+  <div id="paypal-buttons"></div>
+</fieldset>
+
+<fieldset>
+  <legend>3. Verdict</legend>
+  <pre id="verdict">Nothing run yet.</pre>
+  <button id="capture" disabled>Capture the approved payment</button>
+  <pre id="receipt"></pre>
+</fieldset>
+
+<script>
+const API = "https://api.zerobeacon.ai";
+let orderId = null;
+
+function headers() {
+  return { "Content-Type": "application/json", "X-API-Key": document.getElementById("apikey").value.trim() };
+}
+function show(id, obj) {
+  document.getElementById(id).textContent = typeof obj === "string" ? obj : JSON.stringify(obj, null, 2);
+}
+
+// The proposal's repo must name a repository the SERVER can read —
+// the audit re-measures files on the host. The hosted server bundles
+// two one-file sample repos under trust_stack/demo/; the manifest
+// below honestly describes the clean one. Tampering = presenting
+// that same clean manifest for the dirty repo, whose file carries a
+// real `sorry` the manifest denies. A self-hosted instance points
+// repo at any local Lean repository with its true counts.
+const SAMPLE_CLEAN = "/app/trust_stack/demo/sample_repo_clean";
+const SAMPLE_DIRTY = "/app/trust_stack/demo/sample_repo_dirty";
+function proposal(tampered) {
+  return {
+    repo: tampered ? SAMPLE_DIRTY : SAMPLE_CLEAN,
+    manifest: { sorry_count: 0, admit_count: 0, axiom_count: 0, file_count: 1 },
+    server: "zerobeacon",
+    address: "/api/mf/03/cart_checkout"
+  };
+}
+
+document.getElementById("propose").addEventListener("click", async () => {
+  show("verdict", "Running audit + verification...");
+  document.getElementById("capture").disabled = true;
+  orderId = null;
+  const tampered = document.getElementById("tamper").checked;
+  const res = await fetch(API + "/api/trust/paypal/propose", {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify({
+      proposal: proposal(tampered),
+      purchase: {
+        item: document.getElementById("item").value,
+        amount_usd: document.getElementById("amount").value,
+        currency: "USD"
+      }
+    })
+  });
+  const body = await res.json();
+  show("verdict", body);
+  if (body.paypal && body.paypal.status === "created") {
+    orderId = body.paypal.order_id;
+    document.getElementById("capture").disabled = false;
+    show("receipt", "Order created: " + orderId + "\nApprove it with a PayPal sandbox buyer account, then capture.");
+  }
+});
+
+document.getElementById("capture").addEventListener("click", async () => {
+  if (!orderId) return;
+  show("receipt", "Capturing...");
+  const res = await fetch(API + "/api/trust/paypal/capture", {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify({ paypal_order_id: orderId })
+  });
+  show("receipt", await res.json());
+});
+</script>
+</body>
+</html>
